@@ -8,6 +8,12 @@ import AttachmentIcon from '@/images/compose-form-photo.svg?react';
 import SendIcon from '@/images/send-fill.svg?react';
 import EditIcon from '@/styles/bird-theme-svg/pencil-fill.svg?react';
 import { Icon } from 'mastodon/components/icon';
+import type { TypographicReplacement } from 'mastodon/utils/typographic_replacements';
+import {
+  applyEditToTextarea,
+  replaceTypedSequence,
+  undoTypographicReplacement,
+} from 'mastodon/utils/typographic_replacements';
 
 import { useSendOnEnter } from '../util/use_send_on_enter';
 import type { Upload } from '../util/use_uploads';
@@ -148,6 +154,7 @@ export const Composer: React.FC<Props> = ({
   const intl = useIntl();
   const textarea = useRef<HTMLTextAreaElement>(null);
   const fileInput = useRef<HTMLInputElement>(null);
+  const typographic = useRef<TypographicReplacement | null>(null);
 
   const [isComposing, setIsComposing] = useState(false);
 
@@ -181,7 +188,43 @@ export const Composer: React.FC<Props> = ({
 
   const handleChange = useCallback(
     (event: React.ChangeEvent<HTMLTextAreaElement>) => {
-      onChange(event.target.value);
+      const { target } = event;
+      const composing =
+        isComposing || (event.nativeEvent as Partial<InputEvent>).isComposing === true;
+      const edit = composing
+        ? null
+        : replaceTypedSequence(
+            value,
+            target.value,
+            target.selectionStart,
+            typographic.current,
+          );
+
+      typographic.current = edit?.replacement ?? null;
+      if (edit) applyEditToTextarea(target, edit);
+
+      onChange(target.value);
+    },
+    [value, isComposing, onChange],
+  );
+
+  const undoTypographic = useCallback(
+    (event: React.KeyboardEvent<HTMLTextAreaElement>): boolean => {
+      const target = event.currentTarget;
+      const edit = undoTypographicReplacement(
+        target.value,
+        target.selectionStart,
+        target.selectionEnd,
+        typographic.current,
+      );
+
+      typographic.current = null;
+      if (!edit) return false;
+
+      event.preventDefault();
+      applyEditToTextarea(target, edit);
+      onChange(target.value);
+      return true;
     },
     [onChange],
   );
@@ -197,6 +240,11 @@ export const Composer: React.FC<Props> = ({
       const legacyImeKeyCode = event.which === 229;
 
       if (legacyImeKeyCode || event.nativeEvent.isComposing || isComposing) {
+        return;
+      }
+
+      if (event.key === 'Backspace') {
+        undoTypographic(event);
         return;
       }
 
@@ -216,7 +264,7 @@ export const Composer: React.FC<Props> = ({
       }
 
     },
-    [handleSubmit, isComposing, sendOnEnter],
+    [handleSubmit, isComposing, sendOnEnter, undoTypographic],
   );
 
   const handleAttachClick = useCallback(() => {
@@ -243,6 +291,7 @@ export const Composer: React.FC<Props> = ({
   }, []);
 
   const handleBlur = useCallback(() => {
+    typographic.current = null;
     setIsComposing(false);
   }, []);
 

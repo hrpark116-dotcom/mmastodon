@@ -9,6 +9,11 @@ import Overlay from 'react-overlays/Overlay';
 import Textarea from 'react-textarea-autosize';
 
 import AutosuggestAccountContainer from '../features/compose/containers/autosuggest_account_container';
+import {
+  applyEditToTextarea,
+  replaceTypedSequence,
+  undoTypographicReplacement,
+} from '../utils/typographic_replacements';
 
 import AutosuggestEmoji from './autosuggest_emoji';
 import { AutosuggestHashtag } from './autosuggest_hashtag';
@@ -59,8 +64,16 @@ const AutosuggestTextarea = forwardRef(({
   const [selectedSuggestion, setSelectedSuggestion] = useState(0);
   const lastTokenRef = useRef(null);
   const tokenStartRef = useRef(0);
+  const typographicRef = useRef(null);
 
   const handleChange = useCallback((e) => {
+    if (!e.nativeEvent?.isComposing) {
+      const edit = replaceTypedSequence(value ?? '', e.target.value, e.target.selectionStart, typographicRef.current);
+
+      typographicRef.current = edit?.replacement ?? null;
+      if (edit) applyEditToTextarea(e.target, edit);
+    }
+
     const [ tokenStart, token ] = textAtCursorMatchesToken(e.target.value, e.target.selectionStart);
 
     if (token !== null && lastTokenRef.current !== token) {
@@ -74,7 +87,20 @@ const AutosuggestTextarea = forwardRef(({
     }
 
     onChange(e);
-  }, [onSuggestionsFetchRequested, onSuggestionsClearRequested, onChange, setSelectedSuggestion]);
+  }, [value, onSuggestionsFetchRequested, onSuggestionsClearRequested, onChange, setSelectedSuggestion]);
+
+  const undoTypographic = useCallback((e) => {
+    const { target } = e;
+    const edit = undoTypographicReplacement(target.value, target.selectionStart, target.selectionEnd, typographicRef.current);
+
+    typographicRef.current = null;
+    if (!edit) return false;
+
+    e.preventDefault();
+    applyEditToTextarea(target, edit);
+    handleChange({ target });
+    return true;
+  }, [handleChange]);
 
   const handleKeyDown = useCallback((e) => {
     if (disabled) {
@@ -85,6 +111,10 @@ const AutosuggestTextarea = forwardRef(({
     if (e.which === 229 || e.isComposing) {
       // Ignore key events during text composition
       // e.key may be a name of the physical key even in this case (e.x. Safari / Chrome on Mac)
+      return;
+    }
+
+    if (e.key === 'Backspace' && undoTypographic(e)) {
       return;
     }
 
@@ -129,9 +159,10 @@ const AutosuggestTextarea = forwardRef(({
     }
 
     onKeyDown(e);
-  }, [disabled, suggestions, suggestionsHidden, selectedSuggestion, setSelectedSuggestion, setSuggestionsHidden, onSuggestionSelected, onKeyDown]);
+  }, [disabled, suggestions, suggestionsHidden, selectedSuggestion, setSelectedSuggestion, setSuggestionsHidden, onSuggestionSelected, onKeyDown, undoTypographic]);
 
   const handleBlur = useCallback(() => {
+    typographicRef.current = null;
     setSuggestionsHidden(true);
   }, [setSuggestionsHidden]);
 
